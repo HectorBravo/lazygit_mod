@@ -545,6 +545,11 @@ git:
     # passing the `--all` argument to `git log`)
     showWholeGraph: false
 
+    # displays commits from all local and remote branches in the commits view
+    # (equivalent to passing the `--branches --remotes` arguments to `git log`),
+    # excluding reflog, stash and tag refs
+    showCommitsForAllBranches: false
+
   # How branches are sorted in the local branches view.
   # One of: 'date' (default) | 'recency' | 'alphabetical'
   # Can be changed from within Lazygit with the Sort Order menu (`s`) in the

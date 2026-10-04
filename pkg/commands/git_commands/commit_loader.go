@@ -64,6 +64,8 @@ type GetCommitsOptions struct {
 	RefForPushedStatus   models.Ref // the ref to use for determining pushed/unpushed status
 	// determines if we show the whole git graph i.e. pass the '--all' flag
 	All bool
+	// determines if we show all local and remote branches (pass '--branches --remotes'), excluding reflog/stash/tag refs
+	AllBranches bool
 	// If non-empty, show divergence from this ref (left-right log)
 	RefToShowDivergenceFrom string
 	MainBranches            *MainBranches
@@ -607,6 +609,7 @@ func (self *CommitLoader) getLogCmd(opts GetCommitsOptions) *oscommands.CmdObj {
 		Arg(refSpec).
 		ArgIf(gitLogOrder != "default", "--"+gitLogOrder).
 		ArgIf(opts.All, "--all").
+		ArgIf(opts.AllBranches, "--branches", "--remotes").
 		Arg("--oneline").
 		Arg(prettyFormat).
 		Arg("--abbrev=40").

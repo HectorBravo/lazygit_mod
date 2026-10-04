@@ -3914,6 +3914,11 @@
           "type": "boolean",
           "description": "displays the whole git graph by default in the commits view (equivalent to passing the `--all` argument to `git log`)",
           "default": false
+        },
+        "showCommitsForAllBranches": {
+          "type": "boolean",
+          "description": "displays commits from all local and remote branches in the commits view (equivalent to passing the `--branches --remotes` arguments to `git log`), excluding reflog, stash and tag refs",
+          "default": false
         }
       },
       "additionalProperties": false,

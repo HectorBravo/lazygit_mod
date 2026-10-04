@@ -434,6 +434,8 @@ type LogConfig struct {
 	ShowGraph string `yaml:"showGraph" jsonschema:"enum=always,enum=never,enum=when-maximised"`
 	// displays the whole git graph by default in the commits view (equivalent to passing the `--all` argument to `git log`)
 	ShowWholeGraph bool `yaml:"showWholeGraph"`
+	// displays commits from all local and remote branches in the commits view (equivalent to passing the `--branches --remotes` arguments to `git log`), excluding reflog, stash and tag refs
+	ShowCommitsForAllBranches bool `yaml:"showCommitsForAllBranches"`
 }
 
 type CommitPrefixConfig struct {
@@ -959,9 +961,10 @@ func GetDefaultConfigForPlatform(platform string) *UserConfig {
 				SquashMergeMessage: "Squash merge {{selectedRef}} into {{currentBranch}}",
 			},
 			Log: LogConfig{
-				Order:          "topo-order",
-				ShowGraph:      "always",
-				ShowWholeGraph: false,
+				Order:                     "topo-order",
+				ShowGraph:                 "always",
+				ShowWholeGraph:            false,
+				ShowCommitsForAllBranches: false,
 			},
 			LocalBranchSortOrder:         "date",
 			RemoteBranchSortOrder:        "date",
