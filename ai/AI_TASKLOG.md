@@ -4,21 +4,20 @@
 
 | Created | Task | Status | Type | Subtasks | Time Spent | Blockers |
 |---------|------|--------|------|----------|------------|----------|
-| 04-10-2026 16:28:30 | [T1: Show commits for all branches (no reflog)](#task-t1-show-commits-for-all-branches-no-reflog) | <span style="background-color:#0969da;color:#fff;padding:2px 8px;border-radius:12px;font-size:12px;">in_progress</span> | <span style="background-color:#22863a;color:#fff;padding:2px 8px;border-radius:12px;font-size:12px;">feat</span> | 0/6 | 0m | none |
 
-> ✅ **0 completed task(s)** — [View completed tasks](#completed-tasks)
+> ✅ **1 completed task(s)** — [View completed tasks](#completed-tasks)
 
 ---
 
 ## Task T1: Show commits for all branches (no reflog)
 
-- **Status**: <span style="background-color:#0969da;color:#fff;padding:2px 8px;border-radius:12px;font-size:12px;">in_progress</span>
+- **Status**: <span style="background-color:#22863a;color:#fff;padding:2px 8px;border-radius:12px;font-size:12px;">done</span>
 - **Type**: <span style="background-color:#22863a;color:#fff;padding:2px 8px;border-radius:12px;font-size:12px;">feat</span>
 - **Created**: 04-10-2026 16:28:30
-- **Last Updated**: 04-10-2026 16:28:30
-- **Time Spent**: 0m
+- **Last Updated**: 04-10-2026 17:10:18
+- **Time Spent**: 42m
 - **Branch**: [`feat/ai-show-commits-all-branches`](https://github.com/HectorBravo/lazygit_mod/tree/feat/ai-show-commits-all-branches)
-- **Commit(s)**: pending
+- **Commit(s)**: [561a61f25](https://github.com/HectorBravo/lazygit_mod/commit/561a61f25eabbd1ddabcc48615de6418cd6b7fd7)
 - **Blockers**: none
 - **Findings & Notes**:
   - lazygit already ships `git.log.showWholeGraph` which drives `git log --all`. That is the "rubbish" source: `--all` pulls in `refs/stash`, `refs/original/*` (pre-rebase/reflog) and tags.
@@ -26,6 +25,7 @@
   - Both the short commits pane and the maximised (`+`) pane render the **same** `c.Model().Commits` data, fed by a single code path `refreshCommitsWithLimit` (refresh_helper.go:861). So one change covers both panes.
   - The sub-commits view (`refreshSubCommitsWithLimit`, refresh_helper.go:1040) is a separate path and does not set `All`; out of scope.
   - Plan: add an independent `git.log.showCommitsForAllBranches` bool (default false) that drives `git log --branches --remotes`, leaving `showWholeGraph` untouched.
+  - **Done**: All 3 code edits made, docs regenerated, `format`/`build`/`unit-test`/`gofumpt`/`golangci-lint` all green. Code committed to `feat/ai-show-commits-all-branches` (commit `561a61f25`) and pushed. Note: `just` was unavailable on this machine, so the underlying commands were run directly (`go tool gofumpt -l -w .`, `go generate ./...`, `go build -gcflags='all=-N -l'`, `go test ./... -short`, `./scripts/gofumpt-check.sh`, `./scripts/golangci-lint-shim.sh run`).
 
 ### User Confirmations
 
@@ -39,12 +39,12 @@
 
 ### Subtasks / Plan
 
-- [ ] Add `ShowCommitsForAllBranches` to `LogConfig` + default in `pkg/config/user_config.go`
-- [ ] Add `AllBranches` to `GetCommitsOptions` and emit `--branches --remotes` in `getLogCmd` (`pkg/commands/git_commands/commit_loader.go`)
-- [ ] Wire `AllBranches` from config in `refreshCommitsWithLimit` (`pkg/gui/controllers/helpers/refresh_helper.go`)
-- [ ] Regenerate docs via `just generate`
-- [ ] `just format` / `build` / `unit-test` / `lint` all green
-- [ ] Commit code to branch; commit + push task log to `master`
+- [x] Add `ShowCommitsForAllBranches` to `LogConfig` + default in `pkg/config/user_config.go`
+- [x] Add `AllBranches` to `GetCommitsOptions` and emit `--branches --remotes` in `getLogCmd` (`pkg/commands/git_commands/commit_loader.go`)
+- [x] Wire `AllBranches` from config in `refreshCommitsWithLimit` (`pkg/gui/controllers/helpers/refresh_helper.go`)
+- [x] Regenerate docs via `just generate`
+- [x] `just format` / `build` / `unit-test` / `lint` all green
+- [x] Commit code to branch; commit + push task log to `master`
 
 ### Full Context Notes for AI Agents
 
@@ -69,7 +69,7 @@
 - **Commands** (prefer `just`): `just generate`, `just format` (gofumpt), `just build`, `just unit-test`, `just lint`.
 - **Commit conventions (AGENTS.md overrides git-rule Rule 4 for code commits)**: plain English imperative, NO conventional-commit prefixes; body wrapped at 72; end with `Co-authored-by:` trailer naming the model. Task-log commits use `docs(ai):` per git rules. No PRs ever. Use `fixup!` commits for refinements, never `--amend` directly.
 - **Edge cases**: If both `showWholeGraph` and `showCommitsForAllBranches` are true, the command becomes `git log <ref> --all --branches --remotes` (`--all` is a superset → effectively `--all`); harmless, user error to set both. `RefToShowDivergenceFrom` is only set in the sub-commits path, not here.
-- **Current state**: Context gathered and verified. No code changed yet. Next: create branch, make the 3 edits, `just generate`, run checks, commit.
+- **Current state**: DONE. All subtasks complete. Code committed to `feat/ai-show-commits-all-branches` (commit `561a61f25`, plus an `amend!` commit `5d0875ce8` fixing the commit-message body wrapping — the user folds it in with `git rebase --autosquash`). Branch pushed to origin. Task log committed + pushed to `master`.
 
 ---
 
@@ -77,3 +77,4 @@
 
 | Created | Task | Type | Subtasks | Time Spent |
 |---------|------|------|----------|------------|
+| 04-10-2026 16:28:30 | [T1: Show commits for all branches (no reflog)](#task-t1-show-commits-for-all-branches-no-reflog) | <span style="background-color:#22863a;color:#fff;padding:2px 8px;border-radius:12px;font-size:12px;">feat</span> | 6/6 | 42m |
