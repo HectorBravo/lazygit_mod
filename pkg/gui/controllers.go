@@ -65,7 +65,8 @@ func (gui *Gui) resetHelpersAndControllers() {
 		searchHelper,
 	)
 	diffLineHelper := helpers.NewDiffLineHelper(helperCommon)
-	diffHelper := helpers.NewDiffHelper(helperCommon, diffLineHelper)
+	filesHelper := helpers.NewFilesHelper(helperCommon)
+	diffHelper := helpers.NewDiffHelper(helperCommon, diffLineHelper, filesHelper)
 	cherryPickHelper := helpers.NewCherryPickHelper(
 		helperCommon,
 		rebaseHelper,
@@ -92,7 +93,7 @@ func (gui *Gui) resetHelpersAndControllers() {
 		CustomPatch:     customPatchHelper,
 		Bisect:          bisectHelper,
 		Suggestions:     suggestionsHelper,
-		Files:           helpers.NewFilesHelper(helperCommon),
+		Files:           filesHelper,
 		WorkingTree:     helpers.NewWorkingTreeHelper(helperCommon, refsHelper, commitsHelper, gpgHelper, rebaseHelper),
 		Tags:            helpers.NewTagsHelper(helperCommon, commitsHelper, gpgHelper),
 		BranchesHelper:  helpers.NewBranchesHelper(helperCommon, worktreeHelper),
@@ -144,8 +145,6 @@ func (gui *Gui) resetHelpersAndControllers() {
 	)
 
 	submodulesController := controllers.NewSubmodulesController(common)
-
-	bisectController := controllers.NewBisectController(common)
 
 	commitMessageController := controllers.NewCommitMessageController(
 		common,
@@ -310,8 +309,18 @@ func (gui *Gui) resetHelpersAndControllers() {
 
 	controllers.AttachControllers(gui.State.Contexts.LocalCommits,
 		localCommitsController,
-		bisectController,
 	)
+
+	for _, context := range []controllers.CanBisect{
+		gui.State.Contexts.LocalCommits,
+		gui.State.Contexts.SubCommits,
+		gui.State.Contexts.ReflogCommits,
+		gui.State.Contexts.Branches,
+		gui.State.Contexts.RemoteBranches,
+		gui.State.Contexts.Tags,
+	} {
+		controllers.AttachControllers(context, controllers.NewBisectController(common, context))
+	}
 
 	controllers.AttachControllers(gui.State.Contexts.CommitFiles,
 		commitFilesController,

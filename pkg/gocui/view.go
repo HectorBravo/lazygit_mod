@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -46,6 +47,20 @@ type viewBuffer struct {
 	// set pendingNewline to true. If more text is written, we write the newline
 	// then. This avoids an extra blank line at the end of the view.
 	pendingNewline bool
+
+	// the backing array of the slices that parseInput returns, reused for every
+	// character
+	parsedCells []cell
+
+	// the annotation that currentAnnotation returned last, so that cells written in
+	// a row share it
+	lastAnnotation *cellAnnotation
+
+	// Cells that belong at the end of lines[wy]. While write appends to a line, it
+	// collects the cells here, so that the line gets them in one allocation of the
+	// right size. write moves them into the line before anything reads the line,
+	// and before it returns, so this is empty whenever write isn't running.
+	pendingCells []cell
 }
 
 // A View is a window. It maintains its own internal buffer and cursor
@@ -163,6 +178,13 @@ type View struct {
 	// default.
 	Editor Editor
 
+	// OnPaste, if set, receives pasted text in one piece when the paste ends.
+	// The text consists of the pasted printable characters, newlines and tabs;
+	// other keys in the paste, such as Esc or control characters, are dropped.
+	// Pasting into a view without an OnPaste handler does nothing, so that
+	// pasted text never runs keybindings.
+	OnPaste func(text string) error
+
 	// Overwrite enables or disables the overwrite mode of the view.
 	Overwrite bool
 
@@ -174,9 +196,11 @@ type View struct {
 	HighlightInactive bool
 
 	// If SelectedLineColorWidth is greater than zero, a highlighted line is painted
-	// in the selection colors on that many columns at its left edge only, rather
-	// than across its whole width, leaving the line's own colors to show through.
-	// For content that conveys meaning by color of its own.
+	// in the selection colors on that many columns at its left and right edges only,
+	// rather than across its whole width, leaving the line's own colors to show
+	// through. For content that conveys meaning by color of its own. A double-width
+	// character that reaches into these columns is painted whole, so the colored part
+	// can be a column wider.
 	SelectedLineColorWidth int
 
 	// InclusionGutterMarker is the glyph the inclusion gutter draws on a marked line
@@ -420,8 +444,13 @@ func (v *View) viewLineSpanOfBufferLine(bufferLine int) (int, int, bool) {
 }
 
 type searcher struct {
-	searchString       string
-	searchPositions    []SearchPosition
+	searchString string
+
+	// The matches, sorted by line, and within a line by the column they start in.
+	// Since all matches in a line have the same width, they are in the order of the
+	// column they end in, too.
+	searchPositions []SearchPosition
+
 	modelSearchResults []SearchPosition
 	currentSearchIndex int
 	onSelectItem       func(*View, int)
@@ -534,12 +563,34 @@ func (v *View) SelectSearchResult(index int) {
 		index = itemCount - 1
 	}
 
-	y := v.searcher.searchPositions[index].Y
+	pos := v.searcher.searchPositions[index]
+	y := pos.Y
 
 	v.FocusPoint(v.ox, y, true)
+	v.scrollSidewaysToSearchResult(pos)
 	v.renderSearchStatus(index, itemCount)
 	if v.searcher.onSelectItem != nil {
 		v.searcher.onSelectItem(v, y)
+	}
+}
+
+// ScrollSidewaysToCurrentSearchResult scrolls the view sideways to show the current
+// match if it isn't on screen. SelectSearchResult does this too, but if the view renders
+// only the lines on screen, a match that was off screen has no position in its line
+// yet. Call this once its line has been rendered.
+func (v *View) ScrollSidewaysToCurrentSearchResult() {
+	v.refreshSearchPositions()
+
+	if len(v.searcher.searchPositions) > 0 {
+		v.scrollSidewaysToSearchResult(v.searcher.searchPositions[v.searcher.currentSearchIndex])
+	}
+}
+
+// scrollSidewaysToSearchResult scrolls the view sideways to show the given match if it
+// isn't on screen. A match without a position in its line has nothing to scroll to.
+func (v *View) scrollSidewaysToSearchResult(pos SearchPosition) {
+	if pos.XStart >= 0 {
+		v.scrollColumnsIntoView(pos.XStart, pos.XEnd)
 	}
 }
 
@@ -550,6 +601,11 @@ func (v *View) GetSearchStatus() (int, int) {
 	return v.searcher.currentSearchIndex, len(v.searcher.searchPositions)
 }
 
+// UpdateSearchResults runs the search for str again, for content or model search results
+// that have changed. It doesn't move the view. The match at the cursor becomes the
+// current one, in the same way as when the cursor moves; see SetNearestSearchPosition.
+// If the view doesn't show a selection, the current match stays the same.
+//
 // modelSearchResults is optional; pass nil to search the view. If non-nil,
 // these positions will be used for highlighting search results. Even in this
 // case the view will still be searched on a per-line basis, so that the caller
@@ -568,32 +624,54 @@ func (v *View) UpdateSearchResults(str string, modelSearchResults []SearchPositi
 	v.searcher.search(str, modelSearchResults)
 	v.updateSearchPositions()
 
-	if len(v.searcher.searchPositions) > 0 {
-		// get the first result past the current cursor
-		currentIndex := 0
-		if v.Highlight {
-			// ...but only if we're showing the highlighted line
-			adjustedY := v.oy + v.cy
-			adjustedX := v.ox + v.cx
-			for i, pos := range v.searcher.searchPositions {
-				if pos.Y > adjustedY || (pos.Y == adjustedY && pos.XStart > adjustedX) {
-					currentIndex = i
-					break
-				}
-			}
-		}
-		v.searcher.currentSearchIndex = currentIndex
+	if v.Highlight && len(v.searcher.searchPositions) > 0 {
+		v.searcher.currentSearchIndex = v.nearestSearchPosition()
 	}
 }
 
+// Search starts a search for str and goes to its first match after the cursor. See
+// UpdateSearchResults for what modelSearchResults is.
 func (v *View) Search(str string, modelSearchResults []SearchPosition) {
-	v.UpdateSearchResults(str, modelSearchResults)
-
-	if len(v.searcher.searchPositions) > 0 {
+	if v.startSearch(str, modelSearchResults) {
 		v.SelectSearchResult(v.searcher.currentSearchIndex)
 	} else {
 		v.renderSearchStatus(0, 0)
 	}
+}
+
+// startSearch runs a new search for str and makes its first match after the cursor the
+// current one. It returns whether there are any matches.
+func (v *View) startSearch(str string, modelSearchResults []SearchPosition) bool {
+	v.writeMutex.Lock()
+	defer v.writeMutex.Unlock()
+
+	v.searcher.search(str, modelSearchResults)
+	v.updateSearchPositions()
+
+	if len(v.searcher.searchPositions) == 0 {
+		return false
+	}
+	if v.Highlight {
+		v.searcher.currentSearchIndex = v.firstSearchPositionAfterCursor()
+	} else {
+		// If the view doesn't show a selection, the search starts at the first match.
+		v.searcher.currentSearchIndex = 0
+	}
+	return true
+}
+
+// firstSearchPositionAfterCursor returns the first match after the cursor, counting one
+// on the cursor's line if it starts right of the cursor. If there is none, it returns
+// the first match, so that the search wraps around.
+func (v *View) firstSearchPositionAfterCursor() int {
+	cursorY := v.oy + v.cy
+	cursorX := v.ox + v.cx
+	for i, pos := range v.searcher.searchPositions {
+		if pos.Y > cursorY || (pos.Y == cursorY && pos.XStart > cursorX) {
+			return i
+		}
+	}
+	return 0
 }
 
 func (v *View) ClearSearch() {
@@ -604,8 +682,15 @@ func (v *View) IsSearching() bool {
 	return v.searcher.searchString != ""
 }
 
+// nearestSearchPosition returns the current match if it is on the cursor's line.
+// Otherwise it returns the first match on that line, or else the last match above it,
+// or the first match if there is none above.
 func (v *View) nearestSearchPosition() int {
 	currentLineIndex := v.cy + v.oy
+	if v.searcher.searchPositions[v.searcher.currentSearchIndex].Y == currentLineIndex {
+		return v.searcher.currentSearchIndex
+	}
+
 	lastSearchPos := 0
 	for i, pos := range v.searcher.searchPositions {
 		if pos.Y == currentLineIndex {
@@ -695,11 +780,12 @@ func calculateNewOrigin(selectedLine int, oldOrigin int, lineCount int, viewHeig
 	return oldOrigin
 }
 
+// search sets what to search for. It leaves the current match for the caller to choose
+// once the positions have been worked out.
 func (s *searcher) search(str string, modelSearchResults []SearchPosition) {
 	s.searchString = str
 	s.searchPositions = []SearchPosition{}
 	s.modelSearchResults = modelSearchResults
-	s.currentSearchIndex = 0
 }
 
 func (s *searcher) clearSearch() {
@@ -712,6 +798,11 @@ type SearchPosition struct {
 	XStart int
 	XEnd   int
 	Y      int
+}
+
+// contains returns whether the position covers content column x of view line y.
+func (p SearchPosition) contains(x, y int) bool {
+	return p.Y == y && p.XStart <= x && x < p.XEnd
 }
 
 type viewLine struct {
@@ -747,6 +838,15 @@ type lineType struct {
 	// which they hold as the overwrite it caused. nil while the cells spell the
 	// line as it was written, as they do for most lines.
 	asWritten []byte
+
+	// metadata holds the OSC 1717 records that the line's cells carry, each once, in
+	// the order they first appear. They are collected when the write cursor moves on
+	// to the next line, so that a reader can take them from here instead of going
+	// through every cell of every line. metadataCollected is false until then, and
+	// again once anything is written to the line; a reader then takes them from the
+	// cells.
+	metadata          []string
+	metadataCollected bool
 }
 
 // textAsWritten returns the line's text as its writer wrote it, escape sequences
@@ -757,6 +857,34 @@ func (l *lineType) textAsWritten() string {
 		return string(l.asWritten)
 	}
 	return l.cells.String()
+}
+
+// diffLineMetadata returns the OSC 1717 records that the line's cells carry (see
+// lineType.metadata).
+func (l *lineType) diffLineMetadata() []string {
+	if l.metadataCollected {
+		return l.metadata
+	}
+	return metadataOfCells(l.cells)
+}
+
+// collectMetadata keeps the records that the line's cells carry, for readers to take
+// without going through the cells (see lineType.metadata).
+func (l *lineType) collectMetadata() {
+	l.metadata = metadataOfCells(l.cells)
+	l.metadataCollected = true
+}
+
+// metadataOfCells returns the OSC 1717 records that the given cells carry, each once,
+// in the order they first appear.
+func metadataOfCells(cells []cell) []string {
+	var metadata []string
+	for _, c := range cells {
+		if m := c.metadata(); m != "" && !slices.Contains(metadata, m) {
+			metadata = append(metadata, m)
+		}
+	}
+	return metadata
 }
 
 // trailingFillAttributes describes the fg/bg colors that draw() should
@@ -772,10 +900,31 @@ type cell struct {
 	chr              string // a grapheme cluster
 	width            int    // number of terminal cells occupied by chr (always 1 or 2)
 	bgColor, fgColor Attribute
-	hyperlink        string
+	annotation       *cellAnnotation // nil for most cells
+}
+
+// cellAnnotation holds what a few cells carry besides their character and colors.
+// Few cells have one, so it lives behind a pointer to keep cells small. Cells that
+// were written in a row share it, so it must not change once a cell has it.
+type cellAnnotation struct {
+	hyperlink string
 	// the OSC 1717 payload in effect when the cell was written, i.e. what the
 	// diff renderer said about the diff line this cell is part of
 	metadata string
+}
+
+func (c *cell) hyperlink() string {
+	if c.annotation == nil {
+		return ""
+	}
+	return c.annotation.hyperlink
+}
+
+func (c *cell) metadata() string {
+	if c.annotation == nil {
+		return ""
+	}
+	return c.annotation.metadata
 }
 
 type cells []cell
@@ -931,8 +1080,12 @@ func (v *View) InclusionGutterWidthWhenShown() int {
 
 // setCharacter sets a character (grapheme cluster) at the given point relative to the view. It applies
 // the specified colors, taking into account if the cell must be highlighted. Also, it checks if the
-// position is valid.
-func (v *View) setCharacter(x, y int, ch string, fgColor, bgColor Attribute, isWindowFocused bool) {
+// position is valid. width is the number of columns the character takes up. match says whether
+// the character is part of a search match, and hoveredHyperlink whether it is part of the
+// hyperlink under the mouse.
+func (v *View) setCharacter(x, y int, ch string, width int, fgColor, bgColor Attribute, isWindowFocused bool,
+	match searchMatch, hoveredHyperlink bool,
+) {
 	maxX, maxY := v.Size()
 	if x < 0 || x >= maxX || y < 0 || y >= maxY {
 		return
@@ -952,7 +1105,8 @@ func (v *View) setCharacter(x, y int, ch string, fgColor, bgColor Attribute, isW
 		}
 
 		colorWidth := v.SelectedLineColorWidth
-		if y >= rangeSelectStart && y <= rangeSelectEnd && (colorWidth == 0 || x < colorWidth) {
+		if y >= rangeSelectStart && y <= rangeSelectEnd &&
+			(colorWidth == 0 || x < colorWidth || x+width > v.InnerWidth()-colorWidth) {
 			fgColor = applySelTextColor(fgColor, v.SelTextColor)
 			if v.HighlightInactive || !isWindowFocused {
 				bgColor = (bgColor & AttrStyleBits) | v.InactiveViewSelBgColor
@@ -962,16 +1116,16 @@ func (v *View) setCharacter(x, y int, ch string, fgColor, bgColor Attribute, isW
 		}
 	}
 
-	if matched, selected := v.isPatternMatchedRune(x, y); matched {
+	if match != noSearchMatch {
 		fgColor = ColorBlack
-		if selected {
+		if match == currentSearchMatch {
 			bgColor = ColorCyan
 		} else {
 			bgColor = ColorYellow
 		}
 	}
 
-	if v.isHoveredHyperlink(x, y) {
+	if hoveredHyperlink {
 		fgColor |= AttrUnderline
 	}
 
@@ -1129,23 +1283,45 @@ func (b *viewBuffer) makeWriteable(x, y int) {
 // writeCells copies []cell to (b.wx, b.wy), and advances b.wx accordingly.
 // !!! caller MUST ensure that specified location (x, y) is writeable by calling makeWriteable
 func (b *viewBuffer) writeCells(cells []cell) {
-	var newLen int
-	// use maximum len available
-	line := b.lines[b.wy].cells[:cap(b.lines[b.wy].cells)]
-	maxCopy := len(line) - b.wx
-	if maxCopy < len(cells) {
-		copy(line[b.wx:], cells[:maxCopy])
-		line = append(line, cells[maxCopy:]...)
-		newLen = len(line)
-	} else { // maxCopy >= len(cells)
-		copy(line[b.wx:], cells)
-		newLen = b.wx + len(cells)
-		if newLen < len(b.lines[b.wy].cells) {
-			newLen = len(b.lines[b.wy].cells)
+	if b.wx == len(b.lines[b.wy].cells)+len(b.pendingCells) {
+		b.pendingCells = append(b.pendingCells, cells...)
+	} else {
+		b.flushPendingCells()
+
+		var newLen int
+		// use maximum len available
+		line := b.lines[b.wy].cells[:cap(b.lines[b.wy].cells)]
+		maxCopy := len(line) - b.wx
+		if maxCopy < len(cells) {
+			copy(line[b.wx:], cells[:maxCopy])
+			line = append(line, cells[maxCopy:]...)
+			newLen = len(line)
+		} else { // maxCopy >= len(cells)
+			copy(line[b.wx:], cells)
+			newLen = b.wx + len(cells)
+			if newLen < len(b.lines[b.wy].cells) {
+				newLen = len(b.lines[b.wy].cells)
+			}
 		}
+		b.lines[b.wy].cells = line[:newLen]
 	}
-	b.lines[b.wy].cells = line[:newLen]
+	b.lines[b.wy].metadataCollected = false
 	b.wx += len(cells)
+}
+
+// flushPendingCells moves the pending cells into the line they belong to. write
+// must call it before it reads lines[wy] or moves the write cursor to another line.
+func (b *viewBuffer) flushPendingCells() {
+	if len(b.pendingCells) == 0 {
+		return
+	}
+	line := &b.lines[b.wy]
+	if len(line.cells) == 0 {
+		line.cells = slices.Clone(b.pendingCells)
+	} else {
+		line.cells = append(line.cells, b.pendingCells...)
+	}
+	b.pendingCells = b.pendingCells[:0]
 }
 
 // seekWrite moves the write cursor to (x, y). Writing there starts the line over,
@@ -1164,6 +1340,7 @@ func (b *viewBuffer) seekWrite(x, y int) {
 // lineType.asWritten), at the first character the cells won't spell the same way.
 // Up to here they spell it exactly, so their text is what was written so far.
 func (b *viewBuffer) startAsWritten() {
+	b.flushPendingCells()
 	if line := &b.lines[b.wy]; line.asWritten == nil {
 		line.asWritten = append([]byte{}, line.cells.String()...)
 	}
@@ -1227,15 +1404,17 @@ func (b *viewBuffer) write(v *View, p []byte) {
 		// that the line is still recognizable as the diff line it renders rather
 		// than as nothing at all.
 		for _, payload := range b.ei.takeOrphanedMetadata() {
-			b.writeCells([]cell{{metadata: payload}})
+			b.writeCells([]cell{{annotation: &cellAnnotation{metadata: payload}}})
 		}
 		if b.ei.metadata.Len() > 0 && !b.ei.metadataConsumed {
-			b.writeCells([]cell{{metadata: b.ei.metadata.String()}})
+			b.writeCells([]cell{{annotation: &cellAnnotation{metadata: b.ei.metadata.String()}}})
 			b.ei.metadataConsumed = true
 		}
 	}
 
 	advanceToNextLine := func() {
+		b.flushPendingCells()
+		b.lines[b.wy].collectMetadata()
 		b.seekWrite(0, b.wy+1)
 		if b.wy >= len(b.lines) {
 			b.lines = append(b.lines, lineType{})
@@ -1264,7 +1443,12 @@ func (b *viewBuffer) write(v *View, p []byte) {
 	remaining := p[:until]
 
 	for len(remaining) > 0 {
-		chr, remaining, width, state = uniseg.FirstGraphemeCluster(remaining, state)
+		if startsWithPrintableASCIICluster(remaining) {
+			// A cluster boundary follows, so uniseg starts afresh after it.
+			chr, remaining, width, state = remaining[:1], remaining[1:], 1, -1
+		} else {
+			chr, remaining, width, state = uniseg.FirstGraphemeCluster(remaining, state)
+		}
 
 		switch {
 		case characterEquals(chr, '\n') || isCRLF(chr):
@@ -1288,11 +1472,12 @@ func (b *viewBuffer) write(v *View, p []byte) {
 					advanceToNextLine()
 				}
 			}
-			if cells == nil {
+			if len(cells) == 0 && !truncateLine {
 				continue
 			}
 			b.writeCells(cells)
 			if truncateLine {
+				b.flushPendingCells()
 				b.lines[b.wy].cells = b.lines[b.wy].cells[:b.wx]
 			}
 			// Soft-wrap tracking. truncateLine is true exactly when the
@@ -1314,6 +1499,18 @@ func (b *viewBuffer) write(v *View, p []byte) {
 	} else {
 		b.autoRenderHyperlinksInCurrentLine(v)
 	}
+	b.flushPendingCells()
+}
+
+// startsWithPrintableASCIICluster reports whether p starts with a printable ASCII
+// character that is a grapheme cluster of its own, one column wide. Control
+// characters don't qualify, because uniseg gives them a width of 0, and "\r\n" is
+// a single cluster. The character is a cluster of its own if the next byte is ASCII
+// too, of any kind, because no ASCII character extends a cluster. Most text written
+// to views is ASCII, and finding this out is much cheaper than segmenting the text
+// with uniseg.
+func startsWithPrintableASCIICluster(p []byte) bool {
+	return len(p) > 0 && p[0] >= ' ' && p[0] <= '~' && (len(p) == 1 || p[1] < utf8.RuneSelf)
 }
 
 // exported functions use the mutex. Non-exported functions are for internal use
@@ -1361,6 +1558,7 @@ func (b *viewBuffer) autoRenderHyperlinksInCurrentLine(v *View) {
 		return
 	}
 
+	b.flushPendingCells()
 	line := b.lines[b.wy].cells
 	start := 0
 	for {
@@ -1377,18 +1575,40 @@ func (b *viewBuffer) autoRenderHyperlinksInCurrentLine(v *View) {
 			}
 			link.WriteString(line[linkEnd].chr)
 		}
+		// Other cells may share the annotations of the link's cells, so give the
+		// link's cells new ones.
+		var oldAnnotation, newAnnotation *cellAnnotation
 		for i := linkStart; i < linkEnd; i++ {
-			b.lines[b.wy].cells[i].hyperlink = link.String()
+			c := &b.lines[b.wy].cells[i]
+			if newAnnotation == nil || c.annotation != oldAnnotation {
+				oldAnnotation = c.annotation
+				newAnnotation = &cellAnnotation{hyperlink: link.String(), metadata: c.metadata()}
+			}
+			c.annotation = newAnnotation
 		}
 		start = linkEnd
 	}
 }
 
-// parseInput parses char by char the input written to the View. It returns nil
-// while processing ESC sequences. Otherwise, it returns a cell slice that
-// contains the processed data.
+// currentAnnotation returns the annotation for a cell written now: the hyperlink and
+// the OSC 1717 payload in effect, or nil if there are neither.
+func (b *viewBuffer) currentAnnotation() *cellAnnotation {
+	hyperlink, metadata := b.ei.hyperlink.String(), b.ei.metadata.String()
+	if hyperlink == "" && metadata == "" {
+		return nil
+	}
+	if a := b.lastAnnotation; a == nil || a.hyperlink != hyperlink || a.metadata != metadata {
+		b.lastAnnotation = &cellAnnotation{hyperlink: hyperlink, metadata: metadata}
+	}
+	return b.lastAnnotation
+}
+
+// parseInput parses char by char the input written to the View. It returns no
+// cells while processing ESC sequences. Otherwise, it returns a cell slice that
+// contains the processed data. The slice is only valid until the next call.
 func (b *viewBuffer) parseInput(v *View, ch []byte, width int, x int, _ int) (bool, []cell) {
-	cells := []cell{}
+	cells := b.parsedCells[:0]
+	defer func() { b.parsedCells = cells }()
 	truncateLine := false
 
 	isEscape, err := b.ei.parseOne(ch)
@@ -1398,7 +1618,7 @@ func (b *viewBuffer) parseInput(v *View, ch []byte, width int, x int, _ int) (bo
 	// a cell of its own, in the order they were emitted, ahead of whatever this
 	// character produces.
 	for _, payload := range b.ei.takeOrphanedMetadata() {
-		cells = append(cells, cell{metadata: payload})
+		cells = append(cells, cell{annotation: &cellAnnotation{metadata: payload}})
 	}
 
 	if err != nil {
@@ -1463,14 +1683,13 @@ func (b *viewBuffer) parseInput(v *View, ch []byte, width int, x int, _ int) (bo
 			b.noteAsWritten(ch)
 		}
 		c := cell{
-			fgColor:   b.ei.curFgColor,
-			bgColor:   b.ei.curBgColor,
-			hyperlink: b.ei.hyperlink.String(),
-			metadata:  b.ei.metadata.String(),
-			chr:       string(ch),
-			width:     width,
+			fgColor:    b.ei.curFgColor,
+			bgColor:    b.ei.curBgColor,
+			annotation: b.currentAnnotation(),
+			chr:        string(ch),
+			width:      width,
 		}
-		if c.metadata != "" {
+		if c.metadata() != "" {
 			b.ei.metadataConsumed = true
 		}
 		for range repeatCount {
@@ -1845,6 +2064,7 @@ func (v *View) draw(isWindowFocused bool) {
 	emptyCell := cell{chr: " ", width: 1, fgColor: ColorDefault, bgColor: ColorDefault}
 
 	gutterWidth := v.inclusionGutterWidth()
+	searchMatches := v.searcher.matchWalker(v.oy)
 
 	for y, vline := range v.viewLines[start:] {
 		if y >= maxY {
@@ -1862,12 +2082,15 @@ func (v *View) draw(isWindowFocused bool) {
 
 		// The inclusion gutter is blank but for the marker on a marked line, and the
 		// content begins after it. The blanks go through setCharacter like everything
-		// else, so that a selection reaching the left edge covers the gutter too.
+		// else, so that a selection reaching the left edge covers the gutter too. Search
+		// matches and the hovered hyperlink belong to the content, so they don't show in
+		// the gutter, even where the content is scrolled off under it.
 		for gx := range gutterWidth {
-			v.setCharacter(gx, y, " ", v.FgColor, v.BgColor, isWindowFocused)
+			v.setCharacter(gx, y, " ", 1, v.FgColor, v.BgColor, isWindowFocused, noSearchMatch, false)
 		}
 		if gutterWidth > 0 && vline.linesY < len(v.inclusionGutterMarks) && v.inclusionGutterMarks[vline.linesY] {
-			v.setCharacter(0, y, v.InclusionGutterMarker, v.InclusionGutterMarkerColor, v.BgColor, isWindowFocused)
+			v.setCharacter(0, y, v.InclusionGutterMarker, uniseg.StringWidth(v.InclusionGutterMarker),
+				v.InclusionGutterMarkerColor, v.BgColor, isWindowFocused, noSearchMatch, false)
 		}
 
 		// x tracks the current x position in the view, and cellIdx tracks the
@@ -1878,13 +2101,7 @@ func (v *View) draw(isWindowFocused bool) {
 
 		var c cell
 		for x < maxX {
-			if x < 0 {
-				if cellIdx < len(vline.line) {
-					x += uniseg.StringWidth(vline.line[cellIdx].chr)
-					cellIdx++
-					continue
-				}
-
+			if x < gutterWidth && cellIdx >= len(vline.line) {
 				// no more characters to write so we're only going to be printing empty cells
 				// past this point
 				x = gutterWidth
@@ -1897,6 +2114,23 @@ func (v *View) draw(isWindowFocused bool) {
 				c = vline.line[cellIdx]
 			}
 
+			// Skip the cells scrolled past the left edge of the content area; the
+			// content area starts after the gutter.
+			if x < gutterWidth && x+c.width <= gutterWidth {
+				x += c.width
+				cellIdx++
+				continue
+			}
+
+			// A terminal can't show half of a double-width character, so one that is cut
+			// off by the left or right edge shows as a blank in the column of it that is
+			// on screen.
+			if x < gutterWidth || x+c.width > maxX {
+				c.chr = " "
+				c.width = 1
+				x = max(x, gutterWidth)
+			}
+
 			fgColor := c.fgColor
 			if fgColor == ColorDefault {
 				fgColor = v.FgColor
@@ -1905,11 +2139,13 @@ func (v *View) draw(isWindowFocused bool) {
 			if bgColor == ColorDefault {
 				bgColor = v.BgColor
 			}
-			if c.hyperlink != "" && !v.UnderlineHyperLinksOnlyOnHover {
+			if c.hyperlink() != "" && !v.UnderlineHyperLinksOnlyOnHover {
 				fgColor |= AttrUnderline
 			}
 
-			v.setCharacter(x, y, c.chr, fgColor, bgColor, isWindowFocused)
+			contentX, contentY := x-gutterWidth+v.ox, v.oy+y
+			v.setCharacter(x, y, c.chr, c.width, fgColor, bgColor, isWindowFocused,
+				searchMatches.matchAt(contentX, contentY), v.isHoveredHyperlink(contentX, contentY))
 
 			x += c.width
 			cellIdx++
@@ -1998,51 +2234,75 @@ func (v *View) viewLineLengthIgnoringTrailingBlankLines() int {
 	return 0
 }
 
-func (v *View) isPatternMatchedRune(x, y int) (bool, bool) {
-	for i, pos := range v.searcher.searchPositions {
-		adjustedY := y + v.oy
-		adjustedX := x + v.ox
-		if adjustedY == pos.Y && adjustedX >= pos.XStart && adjustedX < pos.XEnd {
-			return true, i == v.searcher.currentSearchIndex
-		}
-	}
-	return false, false
+// contentX returns the column of the view's content that is drawn at column x of the
+// view. The content starts after the inclusion gutter, and is scrolled by the view's
+// horizontal origin.
+func (v *View) contentX(x int) int {
+	return x - v.inclusionGutterWidth() + v.ox
 }
 
+// searchMatch is whether a cell of the view is part of a search match, and if so,
+// whether that match is the current one.
+type searchMatch int
+
+const (
+	noSearchMatch searchMatch = iota
+	otherSearchMatch
+	currentSearchMatch
+)
+
+// searchMatchWalker tells which cells of the view are part of a search match, for drawing
+// them. It has to be asked about the cells in the order they are drawn: line by line, and
+// from left to right within a line. The matches are in the same order, so the walker steps
+// through them along with the cells.
+type searchMatchWalker struct {
+	positions    []SearchPosition
+	currentIndex int
+
+	// The first match that doesn't end before the cell asked about last.
+	index int
+}
+
+// matchWalker returns a searchMatchWalker for drawing the view from view line firstY
+// on.
+func (s *searcher) matchWalker(firstY int) searchMatchWalker {
+	return searchMatchWalker{
+		positions:    s.searchPositions,
+		currentIndex: s.currentSearchIndex,
+		index: sort.Search(len(s.searchPositions), func(i int) bool {
+			return s.searchPositions[i].Y >= firstY
+		}),
+	}
+}
+
+// matchAt returns whether the cell at content column x of view line y is part of a
+// search match. If it is part of several overlapping matches, and the current match is
+// one of them, it counts as part of the current one.
+func (w *searchMatchWalker) matchAt(x, y int) searchMatch {
+	for w.index < len(w.positions) {
+		pos := w.positions[w.index]
+		if pos.Y > y || (pos.Y == y && pos.XEnd > x) {
+			break
+		}
+		w.index++
+	}
+
+	if w.index == len(w.positions) || !w.positions[w.index].contains(x, y) {
+		return noSearchMatch
+	}
+	if w.positions[w.currentIndex].contains(x, y) {
+		return currentSearchMatch
+	}
+	return otherSearchMatch
+}
+
+// isHoveredHyperlink returns whether the cell at content column x of view line y is
+// part of the hyperlink under the mouse.
 func (v *View) isHoveredHyperlink(x, y int) bool {
 	if v.UnderlineHyperLinksOnlyOnHover && v.hoveredHyperlink != nil {
-		adjustedY := y + v.oy
-		adjustedX := x + v.ox
-		return adjustedY == v.hoveredHyperlink.Y && adjustedX >= v.hoveredHyperlink.XStart && adjustedX < v.hoveredHyperlink.XEnd
+		return y == v.hoveredHyperlink.Y && x >= v.hoveredHyperlink.XStart && x < v.hoveredHyperlink.XEnd
 	}
 	return false
-}
-
-// realPosition returns the position in the internal buffer corresponding to the
-// point (x, y) of the view.
-func (v *View) realPosition(vx, vy int) (x, y int, ok bool) {
-	vx = v.ox + vx
-	vy = v.oy + vy
-
-	if vx < 0 || vy < 0 {
-		return 0, 0, false
-	}
-
-	if len(v.viewLines) == 0 {
-		return vx, vy, true
-	}
-
-	if vy < len(v.viewLines) {
-		vline := v.viewLines[vy]
-		x = vline.linesX + vx
-		y = vline.linesY
-	} else {
-		vline := v.viewLines[len(v.viewLines)-1]
-		x = vx
-		y = vline.linesY + vy - len(v.viewLines) + 1
-	}
-
-	return x, y, true
 }
 
 // clearRunes erases all the cells in the view.
@@ -2119,6 +2379,20 @@ func (v *View) DiffLineContents() []DiffLineContent {
 	return diffLineContentsFrom(v.buf, 0)
 }
 
+// DiffLineMetadata is DiffLineContents without the text of the lines, for a reader
+// that only needs the records. Taking the text is most of the cost of
+// DiffLineContents.
+func (v *View) DiffLineMetadata() [][]string {
+	v.writeMutex.Lock()
+	defer v.writeMutex.Unlock()
+
+	metadata := make([][]string, len(v.buf.lines))
+	for i := range v.buf.lines {
+		metadata[i] = v.buf.lines[i].diffLineMetadata()
+	}
+	return metadata
+}
+
 // OffscreenDiffLineContents is DiffLineContents for the content of a re-render in
 // progress (see BeginOffscreenRender). A reader deciding where the new content
 // should be shown has to work from this: it has to answer before the swap, since
@@ -2170,13 +2444,7 @@ func diffLineContentsFrom(buf *viewBuffer, from int) []DiffLineContent {
 	contents := make([]DiffLineContent, len(lines))
 	for i := range lines {
 		line := &lines[i]
-		var metadata []string
-		for _, c := range line.cells {
-			if c.metadata != "" && !slices.Contains(metadata, c.metadata) {
-				metadata = append(metadata, c.metadata)
-			}
-		}
-		contents[i] = DiffLineContent{Text: line.textAsWritten(), Metadata: metadata}
+		contents[i] = DiffLineContent{Text: line.textAsWritten(), Metadata: line.diffLineMetadata()}
 	}
 	return contents
 }
@@ -2271,56 +2539,6 @@ func (v *View) ViewBuffer() string {
 	}
 
 	return strings.Join(strs, "\n")
-}
-
-// Line returns a string with the line of the view's internal buffer
-// at the position corresponding to the point (x, y).
-func (v *View) Line(y int) (string, bool) {
-	_, y, ok := v.realPosition(0, y)
-	if !ok {
-		return "", false
-	}
-
-	if y < 0 || y >= len(v.buf.lines) {
-		return "", false
-	}
-
-	return v.buf.lines[y].cells.String(), true
-}
-
-// Word returns a string with the word of the view's internal buffer
-// at the position corresponding to the point (x, y).
-func (v *View) Word(x, y int) (string, bool) {
-	x, y, ok := v.realPosition(x, y)
-	if !ok {
-		return "", false
-	}
-
-	if x < 0 || y < 0 || y >= len(v.buf.lines) || x >= len(v.buf.lines[y].cells) {
-		return "", false
-	}
-
-	str := v.buf.lines[y].cells.String()
-
-	nl := strings.LastIndexFunc(str[:x], indexFunc)
-	if nl == -1 {
-		nl = 0
-	} else {
-		nl = nl + 1
-	}
-	nr := strings.IndexFunc(str[x:], indexFunc)
-	if nr == -1 {
-		nr = len(str)
-	} else {
-		nr = nr + x
-	}
-	return str[nl:nr], true
-}
-
-// indexFunc allows to split lines by words taking into account spaces
-// and 0.
-func indexFunc(r rune) bool {
-	return r == ' ' || r == 0
 }
 
 // applySelTextColor adds the attributes of selTextColor to fgColor, and
@@ -2752,6 +2970,60 @@ func (v *View) ScrollRight(amount int) {
 	v.clearHover()
 }
 
+// scrollColumnsIntoView scrolls the view sideways if the columns from xStart up to
+// xEnd aren't all on screen. If they fit in the view without any scrolling, the view
+// goes back to the left edge; otherwise xStart ends up a third of the way across, so
+// that some of what comes before it is on screen too. Only a view that doesn't wrap
+// has columns off screen.
+func (v *View) scrollColumnsIntoView(xStart, xEnd int) {
+	v.writeMutex.Lock()
+	defer v.writeMutex.Unlock()
+
+	width := v.InnerWidth() - v.inclusionGutterWidth()
+	if xStart >= v.ox && xEnd <= v.ox+width {
+		return
+	}
+
+	if xEnd <= width {
+		v.SetOriginX(0)
+	} else {
+		v.SetOriginX(xStart - width/3)
+	}
+
+	v.clearHover()
+}
+
+// ClampOriginXToContent scrolls the view back to the left if it is scrolled further
+// than its content needs, so that the end of the widest line is at the right edge.
+// A view that doesn't wrap keeps its horizontal scroll position when its content
+// changes, and the new content may not reach as far.
+func (v *View) ClampOriginXToContent() {
+	v.writeMutex.Lock()
+	defer v.writeMutex.Unlock()
+
+	if v.ox == 0 {
+		return
+	}
+
+	v.refreshViewLinesIfNeeded()
+	widest := 0
+	for _, vline := range v.viewLines {
+		width := 0
+		for _, c := range vline.line {
+			width += c.width
+		}
+		widest = max(widest, width)
+	}
+
+	contentWidth := v.InnerWidth() - v.inclusionGutterWidth()
+	newOx := min(v.ox, max(0, widest-contentWidth))
+	if newOx != v.ox {
+		v.SetOriginX(newOx)
+
+		v.clearHover()
+	}
+}
+
 func (v *View) adjustDownwardScrollAmount(scrollHeight int) int {
 	_, oy := v.Origin()
 	y := oy
@@ -2836,7 +3108,7 @@ func (v *View) onMouseMove(x int, y int) {
 	newCx := x - v.x0 - 1
 	newCy := y - v.y0 - 1
 	// newX and newY are relative to the view's content, independent of its scroll position
-	newX := newCx + v.ox
+	newX := v.contentX(newCx)
 	newY := newCy + v.oy
 
 	if newY >= 0 && newY <= len(v.viewLines)-1 && newX >= 0 && newX <= len(v.viewLines[newY].line)-1 {
@@ -2860,21 +3132,21 @@ func (v *View) hyperlinkAt(x, y int) string {
 		return ""
 	}
 
-	return v.viewLines[y].line[x].hyperlink
+	return v.viewLines[y].line[x].hyperlink()
 }
 
 func (v *View) findHyperlinkAt(x, y int) *SearchPosition {
-	linkStr := v.viewLines[y].line[x].hyperlink
+	linkStr := v.viewLines[y].line[x].hyperlink()
 	if linkStr == "" {
 		return nil
 	}
 
 	xStart := x
-	for xStart > 0 && v.viewLines[y].line[xStart-1].hyperlink == linkStr {
+	for xStart > 0 && v.viewLines[y].line[xStart-1].hyperlink() == linkStr {
 		xStart--
 	}
 	xEnd := x + 1
-	for xEnd < len(v.viewLines[y].line) && v.viewLines[y].line[xEnd].hyperlink == linkStr {
+	for xEnd < len(v.viewLines[y].line) && v.viewLines[y].line[xEnd].hyperlink() == linkStr {
 		xEnd++
 	}
 

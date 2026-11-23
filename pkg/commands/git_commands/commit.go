@@ -242,7 +242,7 @@ func (self *CommitCommands) AmendHeadCmdObj() *oscommands.CmdObj {
 
 func (self *CommitCommands) ShowCmdObj(hash string, filterPaths []string, mode DiffMode) *oscommands.CmdObj {
 	cmdArgs := NewGitCmd("show").
-		Config("diff.noprefix=false").
+		ParseableDiffPrefixes().
 		AddCommonDiffArgs(self.diffRendererConfigManager, self.UserConfig(), mode).
 		Arg("--submodule").
 		Arg("--color=" + mode.colorArg(self.diffRendererConfigManager)).
@@ -275,7 +275,10 @@ func (self *CommitCommands) Revert(hashes []string, isMerge bool) error {
 		Arg(hashes...).
 		ToArgv()
 
-	return self.cmd.New(cmdArgs).Run()
+	return abortSequenceAfterLockError(self.cmd.New(cmdArgs), self.repoPaths.WorktreeGitDirPath(), len(hashes),
+		func() *oscommands.CmdObj {
+			return self.cmd.New(NewGitCmd("revert").Arg("--abort").ToArgv())
+		}).Run()
 }
 
 // CreateFixupCommit creates a commit that fixes up a previous commit

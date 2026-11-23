@@ -103,6 +103,24 @@ type TranslationSet struct {
 	MergeConflictTakeCurrentCommit        string
 	MergeConflictTakeIncomingCommit       string
 	SubmoduleMergeConflictDescription     string
+	SubmoduleLabel                        string
+	RemovedSubmoduleLabel                 string
+	NestedRepositoryLabel                 string
+	WorktreeLabel                         string
+	RemovedSubmoduleDescription           string
+	NestedRepositoryDescription           string
+	NestedRepositoryDiscardHint           string
+	NestedRepositoryDiscardWarning        string
+	WorktreeInsideRepoDescription         string
+	NestedRepositoryStatus                string
+	PlainDirectoryDescription             string
+	PlainDirectoryFiles                   string
+	StageNestedRepositoryDisabled         string
+	StageWorktreeDisabled                 string
+	CheckingNestedRepositories            string
+	DiscardNestedRepositoriesPrompt       string
+	NestedRepositoryHistoryWouldBeLost    string
+	NestedRepositoryChangesWouldBeLost    string
 	StageConflictsRangeDisabled           string
 	Checkout                              string
 	CheckoutTooltip                       string
@@ -286,6 +304,7 @@ type TranslationSet struct {
 	SquashMergeUncommittedTooltip         string
 	SquashMergeCommitted                  string
 	SquashMergeCommittedTooltip           string
+	CantSquashMergeWithStagedChanges      string
 	ConfirmQuit                           string
 	SwitchRepo                            string
 	AllBranchesLogGraph                   string
@@ -332,7 +351,7 @@ type TranslationSet struct {
 	FastForwarding                        string
 	FoundConflictsTitle                   string
 	ViewConflictsMenuItem                 string
-	AbortMenuItem                         string
+	AbortOperationMenuItem                string
 	PickHunk                              string
 	PickBothHunks                         string
 	ViewMergeRebaseOptions                string
@@ -341,6 +360,7 @@ type TranslationSet struct {
 	ViewRebaseOptions                     string
 	ViewCherryPickOptions                 string
 	ViewRevertOptions                     string
+	ViewApplyPatchesOptions               string
 	NotMergingOrRebasing                  string
 	AlreadyRebasing                       string
 	NotMidRebase                          string
@@ -353,6 +373,7 @@ type TranslationSet struct {
 	RebaseOptionsTitle                    string
 	CherryPickOptionsTitle                string
 	RevertOptionsTitle                    string
+	ApplyPatchesOptionsTitle              string
 	CommitSummaryTitle                    string
 	CommitDescriptionTitle                string
 	CommitDescriptionSubTitle             string
@@ -368,7 +389,7 @@ type TranslationSet struct {
 	InformationTitle                      string
 	SecondaryTitle                        string
 	ReflogCommitsTitle                    string
-	ConflictsResolved                     string
+	ContinueAfterConflictsResolved        string
 	Continue                              string
 	UnstagedFilesAfterConflictsResolved   string
 	RebasingTitle                         string
@@ -396,6 +417,7 @@ type TranslationSet struct {
 	PendingRebaseTodosSectionHeader       string
 	PendingCherryPicksSectionHeader       string
 	PendingRevertsSectionHeader           string
+	PendingPatchesSectionHeader           string
 	CommitsSectionHeader                  string
 	MoveCommitsHere                       string
 	MovingCommitsHere                     string
@@ -403,6 +425,7 @@ type TranslationSet struct {
 	RewordNotSupported                    string
 	ChangingThisActionIsNotAllowed        string
 	NotAllowedMidCherryPickOrRevert       string
+	NotAllowedWhileApplyingPatches        string
 	PickIsOnlyAllowedDuringRebase         string
 	DroppingMergeRequiresSingleSelection  string
 	CherryPickCopy                        string
@@ -411,8 +434,6 @@ type TranslationSet struct {
 	SureCherryPick                        string
 	CherryPick                            string
 	CannotCherryPickNonCommit             string
-	Donate                                string
-	AskQuestion                           string
 	PrevHunk                              string
 	NextHunk                              string
 	PrevFileInDiff                        string
@@ -422,6 +443,8 @@ type TranslationSet struct {
 	JumpToFileInDiffTooltip               string
 	OnlyOneFileInDiff                     string
 	NoFileInDiffNamed                     string
+	FileOfDiffDoesNotExist                string
+	NoFileOfDiffExists                    string
 	PrevConflict                          string
 	NextConflict                          string
 	SelectPrevHunk                        string
@@ -455,6 +478,13 @@ type TranslationSet struct {
 	LowercaseMergingStatus                string
 	LowercaseCherryPickingStatus          string
 	LowercaseRevertingStatus              string
+	RebaseOperationName                   string
+	MergeOperationName                    string
+	CherryPickOperationName               string
+	RevertOperationName                   string
+	ApplyPatchesOperationName             string
+	LowercaseApplyingPatchesStatus        string
+	ApplyingPatchesStatus                 string
 	AmendingStatus                        string
 	CherryPickingStatus                   string
 	UndoingStatus                         string
@@ -559,6 +589,7 @@ type TranslationSet struct {
 	StashOptions                          string
 	NotARepository                        string
 	WorkingDirectoryDoesNotExist          string
+	RepoDirNoLongerExists                 string
 	ScrollLeft                            string
 	ScrollRight                           string
 	DiscardPatch                          string
@@ -732,8 +763,10 @@ type TranslationSet struct {
 	CopyCommitHashToClipboard             string
 	CommitHash                            string
 	CommitURL                             string
+	CopyCommitMessageToClipboard          string
 	PasteCommitMessageFromClipboard       string
 	SurePasteCommitMessage                string
+	ClearCommitMessage                    string
 	CommitMessage                         string
 	CommitMessageBody                     string
 	CommitSubject                         string
@@ -748,6 +781,9 @@ type TranslationSet struct {
 	CopySelectedDiffLinesToClipboard      string
 	SelectedDiffLinesCopiedToast          string
 	SelectionNotFoundInDiffToast          string
+	DiffLinesFileNotFound                 string
+	DiffLinesNotFound                     string
+	CommitNotInCommitsPanel               string
 	NoFilesStagedTitle                    string
 	NoFilesStagedPrompt                   string
 	BranchNotFoundTitle                   string
@@ -854,8 +890,9 @@ type TranslationSet struct {
 	MustSpecifyOriginError                   string
 	GitOutput                                string
 	GitCommandFailed                         string
-	AbortTitle                               string
-	AbortPrompt                              string
+	AbortOperationTitle                      string
+	AbortOperationPrompt                     string
+	AbortOperationDiscardsChangesPrompt      string
 	OpenLogMenu                              string
 	OpenLogMenuTooltip                       string
 	LogMenuTitle                             string
@@ -989,10 +1026,13 @@ type TranslationSet struct {
 	RangeSelectUp                            string
 	RangeSelectDown                          string
 	RangeSelectNotSupported                  string
+	NotSupportedForPatchFromMergeCommit      string
+	CannotMovePatchToMergeCommit             string
 	NoItemSelected                           string
 	SelectedItemIsNotABranch                 string
 	SelectedItemDoesNotHaveFiles             string
 	MultiSelectNotSupportedForSubmodules     string
+	MultiSelectNotSupportedForWorktrees      string
 	NothingToStageForSubmodule               string
 	CommandDoesNotSupportOpeningInEditor     string
 	CustomCommands                           string
@@ -1014,7 +1054,7 @@ type TranslationSet struct {
 }
 
 type Bisect struct {
-	MarkStart                   string
+	MarkRefStart                string
 	ResetTitle                  string
 	ResetPrompt                 string
 	ResetOption                 string
@@ -1023,8 +1063,14 @@ type Bisect struct {
 	NewTermPrompt               string
 	BisectMenuTitle             string
 	Mark                        string
+	MarkRef                     string
 	SkipCurrent                 string
 	SkipSelected                string
+	SkipRef                     string
+	CommitRef                   string
+	BranchRef                   string
+	TagRef                      string
+	UseCommitsPanel             string
 	CompleteTitle               string
 	CompletePrompt              string
 	CompletePromptIndeterminate string
@@ -1174,17 +1220,13 @@ type Actions struct {
 }
 
 const englishIntroPopupMessage = `
-Thanks for using lazygit! Seriously you rock. Three things to share with you:
+Thanks for using lazygit! Seriously you rock. Two things to share with you:
 
  1) If you want to learn about lazygit's features, watch this vid:
       https://youtu.be/CPLdltN7wgE
 
  2) Be sure to read the latest release notes at:
       https://github.com/jesseduffield/lazygit/releases
-
- 3) If lazygit has made your life easier, you can say thanks by clicking the
-    donate button at the bottom right. Donation does not grant priority support,
-    but it is much appreciated.
 
 Press {{confirmationKey}} to get started.
 `
@@ -1262,6 +1304,24 @@ func EnglishTranslationSet() *TranslationSet {
 		MergeConflictTakeCurrentCommit:       "Take current commit",
 		MergeConflictTakeIncomingCommit:      "Take incoming commit",
 		SubmoduleMergeConflictDescription:    "Conflict: the submodule '{{.path}}' was set to a different commit in the current and the incoming changes. Pick which commit to keep.",
+		SubmoduleLabel:                       "submodule",
+		RemovedSubmoduleLabel:                "removed submodule",
+		NestedRepositoryLabel:                "nested repository",
+		WorktreeLabel:                        "worktree",
+		RemovedSubmoduleDescription:          "'{{.path}}' is left over from a submodule that this repository no longer has. A commit that you pulled or checked out probably removed it. Git leaves the files of a removed submodule behind, so they show up as an untracked directory.\n\nIf you don't need them any more, press {{.discardKey}} to discard the directory. This also discards any uncommitted changes in it; see the status below. The submodule's commits stay in its git directory, so checking out an older commit that still has the submodule keeps working.",
+		NestedRepositoryDescription:          "'{{.path}}' is a git repository of its own inside this one. Git doesn't look into it, so it shows up as a single untracked entry.\n\nIf this repository is meant to track it, add it as a submodule. Otherwise, you can ignore it with {{.ignoreKey}} so that it no longer shows up here.",
+		NestedRepositoryDiscardHint:          "Pressing {{.discardKey}} discards the directory, including any uncommitted changes in it; see the status below.",
+		NestedRepositoryDiscardWarning:       "Pressing {{.discardKey}} discards the directory, including the repository with all of its history.",
+		WorktreeInsideRepoDescription:        "'{{.path}}' is a linked worktree of this repository. Git doesn't look into it, so it shows up as a single untracked entry.\n\nTo remove the worktree, press {{.removeKey}}. If you keep worktrees inside the repository, add their directory to .gitignore so that they don't show up here.",
+		NestedRepositoryStatus:               "Status of '{{.path}}'",
+		StageNestedRepositoryDisabled:        "Can't stage '{{.path}}' because it is a git repository of its own. Discard it with {{.discardKey}}, or ignore it with {{.ignoreKey}}.",
+		StageWorktreeDisabled:                "Can't stage '{{.path}}' because it is a worktree. Remove it with {{.removeKey}}, or ignore it with {{.ignoreKey}}.",
+		CheckingNestedRepositories:           "Checking for uncommitted changes",
+		DiscardNestedRepositoriesPrompt:      "Discarding this also discards the following. Are you sure?",
+		NestedRepositoryHistoryWouldBeLost:   "'{{.path}}': the repository with all of its history",
+		NestedRepositoryChangesWouldBeLost:   "'{{.path}}': uncommitted changes",
+		PlainDirectoryDescription:            "'{{.path}}' is an untracked directory. Git shows it as a single entry because status.showUntrackedFiles is set to \"normal\".",
+		PlainDirectoryFiles:                  "Files in '{{.path}}'",
 		StageConflictsRangeDisabled:          "Cannot stage a selection that includes files with merge conflicts; resolve them individually with {{.goIntoKey}} first.",
 		Checkout:                             "Checkout",
 		CheckoutTooltip:                      "Checkout selected item.",
@@ -1471,6 +1531,7 @@ func EnglishTranslationSet() *TranslationSet {
 		SquashMergeUncommittedTooltip:        "Squash merge '{{.selectedBranch}}' into the working tree.",
 		SquashMergeCommitted:                 "Squash merge and commit",
 		SquashMergeCommittedTooltip:          "Squash merge '{{.selectedBranch}}' into '{{.checkedOutBranch}}' as a single commit.",
+		CantSquashMergeWithStagedChanges:     "Cannot squash merge while there are staged changes",
 		ConfirmQuit:                          `Are you sure you want to quit?`,
 		SwitchRepo:                           `Switch to a recent repo`,
 		AllBranchesLogGraph:                  `Show/cycle all branch logs`,
@@ -1520,13 +1581,14 @@ func EnglishTranslationSet() *TranslationSet {
 		FastForwarding:                       "Fast-forwarding",
 		FoundConflictsTitle:                  "Conflicts!",
 		ViewConflictsMenuItem:                "View conflicts",
-		AbortMenuItem:                        "Abort the %s",
+		AbortOperationMenuItem:               "Abort {{.operation}}",
 		ViewMergeRebaseOptions:               "View merge/rebase options",
 		ViewMergeRebaseOptionsTooltip:        "View options to abort/continue/skip the current merge/rebase.",
 		ViewMergeOptions:                     "View merge options",
 		ViewRebaseOptions:                    "View rebase options",
 		ViewCherryPickOptions:                "View cherry-pick options",
 		ViewRevertOptions:                    "View revert options",
+		ViewApplyPatchesOptions:              "View 'am' options",
 		NotMergingOrRebasing:                 "You are currently neither rebasing nor merging",
 		AlreadyRebasing:                      "Can't perform this action during a rebase",
 		NotMidRebase:                         "This action only works during an interactive rebase",
@@ -1539,6 +1601,7 @@ func EnglishTranslationSet() *TranslationSet {
 		RebaseOptionsTitle:                   "Rebase options",
 		CherryPickOptionsTitle:               "Cherry-pick options",
 		RevertOptionsTitle:                   "Revert options",
+		ApplyPatchesOptionsTitle:             "Applying patches",
 		CommitSummaryTitle:                   "Commit summary",
 		CommitDescriptionTitle:               "Commit description",
 		CommitDescriptionSubTitle:            "Press {{.togglePanelKeyBinding}} to toggle focus, {{.commitMenuKeybinding}} to open menu",
@@ -1555,7 +1618,7 @@ func EnglishTranslationSet() *TranslationSet {
 		SecondaryTitle:                       "Secondary",
 		ReflogCommitsTitle:                   "Reflog",
 		GlobalTitle:                          "Global keybindings",
-		ConflictsResolved:                    "All merge conflicts resolved. Continue the %s?",
+		ContinueAfterConflictsResolved:       "All merge conflicts resolved. Continue {{.operation}}?",
 		Continue:                             "Continue",
 		UnstagedFilesAfterConflictsResolved:  "Files have been modified since conflicts were resolved. Auto-stage them and continue?",
 		Keybindings:                          "Keybindings",
@@ -1588,6 +1651,7 @@ func EnglishTranslationSet() *TranslationSet {
 		PendingRebaseTodosSectionHeader:      "Pending rebase todos",
 		PendingCherryPicksSectionHeader:      "Pending cherry-picks",
 		PendingRevertsSectionHeader:          "Pending reverts",
+		PendingPatchesSectionHeader:          "Pending patches",
 		CommitsSectionHeader:                 "Commits",
 		MoveCommitsHere:                      "drop here",
 		MovingCommitsHere:                    "moving commits here",
@@ -1595,6 +1659,7 @@ func EnglishTranslationSet() *TranslationSet {
 		RewordNotSupported:                   "Rewording commits while interactively rebasing is not currently supported",
 		ChangingThisActionIsNotAllowed:       "Changing this kind of rebase todo entry is not allowed",
 		NotAllowedMidCherryPickOrRevert:      "This action is not allowed while cherry-picking or reverting",
+		NotAllowedWhileApplyingPatches:       "This action is not allowed while applying patches",
 		PickIsOnlyAllowedDuringRebase:        "This action is only allowed while rebasing",
 		DroppingMergeRequiresSingleSelection: "Dropping a merge commit requires a single selected item",
 		CherryPickCopy:                       "Copy (cherry-pick)",
@@ -1603,8 +1668,6 @@ func EnglishTranslationSet() *TranslationSet {
 		SureCherryPick:                       "Are you sure you want to cherry-pick the {{.numCommits}} copied commit(s) onto this branch?",
 		CherryPick:                           "Cherry-pick",
 		CannotCherryPickNonCommit:            "Cannot cherry-pick this kind of todo item",
-		Donate:                               "Donate",
-		AskQuestion:                          "Ask Question",
 		PrevHunk:                             "Go to previous hunk",
 		NextHunk:                             "Go to next hunk",
 		PrevFileInDiff:                       "Go to previous file",
@@ -1614,6 +1677,8 @@ func EnglishTranslationSet() *TranslationSet {
 		JumpToFileInDiffTooltip:              "Pick one of the files of the diff shown in the main view, and scroll the main view to it. The focus stays in this panel.",
 		OnlyOneFileInDiff:                    "There is only one file in this diff",
 		NoFileInDiffNamed:                    "This diff has no file named '{{.path}}'",
+		FileOfDiffDoesNotExist:               "File '{{.path}}' doesn't exist in the working tree",
+		NoFileOfDiffExists:                   "None of the selected files exist in the working tree at '{{.worktreePath}}'",
 		PrevConflict:                         "Previous conflict",
 		NextConflict:                         "Next conflict",
 		SelectPrevHunk:                       "Previous hunk",
@@ -1647,6 +1712,13 @@ func EnglishTranslationSet() *TranslationSet {
 		LowercaseMergingStatus:               "merging",        // lowercase because it shows up in parentheses
 		LowercaseCherryPickingStatus:         "cherry-picking", // lowercase because it shows up in parentheses
 		LowercaseRevertingStatus:             "reverting",      // lowercase because it shows up in parentheses
+		RebaseOperationName:                  "the rebase",
+		MergeOperationName:                   "the merge",
+		CherryPickOperationName:              "the cherry-pick",
+		RevertOperationName:                  "the revert",
+		ApplyPatchesOperationName:            "applying patches",
+		LowercaseApplyingPatchesStatus:       "applying patches", // lowercase because it shows up in parentheses
+		ApplyingPatchesStatus:                "Applying patches",
 		AmendingStatus:                       "Amending",
 		CherryPickingStatus:                  "Cherry-picking",
 		UndoingStatus:                        "Undoing",
@@ -1752,6 +1824,7 @@ func EnglishTranslationSet() *TranslationSet {
 		StashOptions:                         "Stash options",
 		NotARepository:                       "Error: must be run inside a git repository",
 		WorkingDirectoryDoesNotExist:         "Error: the current working directory does not exist",
+		RepoDirNoLongerExists:                "Error: {{.path}} no longer exists",
 		ScrollLeft:                           "Scroll left",
 		ScrollRight:                          "Scroll right",
 		DiscardPatch:                         "Discard patch",
@@ -1923,8 +1996,10 @@ func EnglishTranslationSet() *TranslationSet {
 		CopyCommitHashToClipboard:                "Copy abbreviated commit hash to clipboard",
 		CommitHash:                               "Commit hash",
 		CommitURL:                                "Commit URL",
+		CopyCommitMessageToClipboard:             "Copy commit message to clipboard",
 		PasteCommitMessageFromClipboard:          "Paste commit message from clipboard",
 		SurePasteCommitMessage:                   "Pasting will overwrite the current commit message, continue?",
+		ClearCommitMessage:                       "Clear commit message",
 		CommitMessage:                            "Commit message (subject and body)",
 		CommitMessageBody:                        "Commit message body",
 		CommitSubject:                            "Commit subject",
@@ -1938,6 +2013,9 @@ func EnglishTranslationSet() *TranslationSet {
 		CopySelectedDiffLinesToClipboard:         "Copy selected diff lines to clipboard",
 		SelectedDiffLinesCopiedToast:             "Selected diff lines copied to clipboard",
 		SelectionNotFoundInDiffToast:             "Nothing in the selection could be found in the diff",
+		DiffLinesFileNotFound:                    "Can't find the file '{{.path}}' that the selected lines belong to",
+		DiffLinesNotFound:                        "Can't find the selected lines in the diff of '{{.path}}'",
+		CommitNotInCommitsPanel:                  "Can't find commit {{.hash}} in the commits panel",
 		CommitPrefixPatternError:                 "Error in commitPrefix pattern",
 		NoFilesStagedTitle:                       "No files staged",
 		NoFilesStagedPrompt:                      "You have not staged any files. Commit all files?",
@@ -2043,8 +2121,9 @@ func EnglishTranslationSet() *TranslationSet {
 		MustSpecifyOriginError:                   "Must specify a remote if specifying a branch",
 		GitOutput:                                "Git output:",
 		GitCommandFailed:                         "Git command failed. Check command log for details (open with %s)",
-		AbortTitle:                               "Abort %s",
-		AbortPrompt:                              "Are you sure you want to abort the current %s?",
+		AbortOperationTitle:                      "Abort {{.operation}}",
+		AbortOperationPrompt:                     "Are you sure you want to abort {{.operation}}?",
+		AbortOperationDiscardsChangesPrompt:      "Aborting {{.operation}} also discards the unstaged changes of these files. Are you sure?",
 		OpenLogMenu:                              "View log options",
 		OpenLogMenuTooltip:                       "View options for commit log e.g. changing sort order, hiding the git graph, showing the whole git graph.",
 		LogMenuTitle:                             "Commit Log Options",
@@ -2175,10 +2254,13 @@ func EnglishTranslationSet() *TranslationSet {
 		RangeSelectUp:                            "Range select up",
 		RangeSelectDown:                          "Range select down",
 		RangeSelectNotSupported:                  "Action does not support range selection, please select a single item",
+		NotSupportedForPatchFromMergeCommit:      "Not supported for a patch from a merge commit",
+		CannotMovePatchToMergeCommit:             "Cannot move a patch to a merge commit",
 		NoItemSelected:                           "No item selected",
 		SelectedItemIsNotABranch:                 "Selected item is not a branch",
 		SelectedItemDoesNotHaveFiles:             "Selected item does not have files to view",
 		MultiSelectNotSupportedForSubmodules:     "Multiselection not supported for submodules",
+		MultiSelectNotSupportedForWorktrees:      "Multiselection not supported for worktrees",
 		NothingToStageForSubmodule:               "Nothing to stage: the parent repo can only stage a new submodule commit, not the uncommitted changes inside a submodule. Commit inside the submodule first.",
 		CommandDoesNotSupportOpeningInEditor:     "This command doesn't support switching to the editor",
 		CustomCommands:                           "Custom commands",
@@ -2321,9 +2403,15 @@ func EnglishTranslationSet() *TranslationSet {
 		},
 		Bisect: Bisect{
 			Mark:                        "Mark current commit (%s) as %s",
-			MarkStart:                   "Mark %s as %s (start bisect)",
+			MarkRefStart:                "Mark {{.ref}} as {{.term}} (start bisect)",
 			SkipCurrent:                 "Skip current commit (%s)",
 			SkipSelected:                "Skip selected commit (%s)",
+			MarkRef:                     "Mark {{.ref}} as {{.term}}",
+			SkipRef:                     "Skip {{.ref}}",
+			CommitRef:                   "commit {{.hash}}",
+			BranchRef:                   "branch '{{.name}}'",
+			TagRef:                      "tag '{{.name}}'",
+			UseCommitsPanel:             "Bisecting is in progress; use the commits panel",
 			ResetTitle:                  "Reset 'git bisect'",
 			ResetPrompt:                 "Are you sure you want to reset 'git bisect'?",
 			ResetOption:                 "Reset bisect",

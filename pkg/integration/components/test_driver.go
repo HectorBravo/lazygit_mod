@@ -61,6 +61,12 @@ func (self *TestDriver) click(x, y int) {
 	self.Wait(self.inputDelay)
 }
 
+func (self *TestDriver) doubleClick(x, y int) {
+	self.SetCaption(fmt.Sprintf("Double-clicking %d, %d", x, y))
+	self.gui.DoubleClick(x, y)
+	self.Wait(self.inputDelay)
+}
+
 func (self *TestDriver) clickWithModifier(x, y int, modifier gocui.Modifier, what string) {
 	self.SetCaption(fmt.Sprintf("%s-clicking %d, %d", what, x, y))
 	self.gui.ClickWithModifier(x, y, modifier)
@@ -127,6 +133,12 @@ func (self *TestDriver) CursorIsHidden() *TestDriver {
 func (self *TestDriver) FocusIn() {
 	self.SetCaption("Focusing window")
 	self.gui.FocusIn()
+	self.Wait(self.inputDelay)
+}
+
+func (self *TestDriver) paste(text string) {
+	self.SetCaption(fmt.Sprintf("Pasting %q", text))
+	self.gui.Paste(text)
 	self.Wait(self.inputDelay)
 }
 

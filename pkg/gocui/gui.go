@@ -119,6 +119,7 @@ type replayedEvents struct {
 	Resizes     chan *TcellResizeEventWrapper
 	MouseEvents chan *TcellMouseEventWrapper
 	FocusEvents chan *TcellFocusEventWrapper
+	PasteEvents chan *TcellPasteEventWrapper
 }
 
 type RecordingConfig struct {
@@ -187,7 +188,13 @@ type Gui struct {
 	// If Mouse is true then mouse events will be enabled.
 	Mouse bool
 
-	IsPasting bool
+	// Whether a paste is in progress, between the terminal's events for its
+	// start and end
+	isPasting bool
+
+	// The text pasted so far into pasteView, a view with an OnPaste handler
+	pasteBuffer strings.Builder
+	pasteView   *View
 
 	// If InputEsc is true, when ESC sequence is in the buffer and it doesn't
 	// match any known sequence, ESC means KeyEsc.
@@ -242,15 +249,15 @@ type Gui struct {
 	colorSchemeHandler func(DetectedColorScheme) error
 
 	// blockInputCount, when greater than zero, withholds keyboard input from
-	// the handlers: key events are buffered into bufferedKeyEvents and replayed
-	// once the count drops back to zero, while mouse clicks and hover are
-	// dropped outright. It's a counter so blocking can nest. replayPending says
-	// that the replay is queued but hasn't run yet, and input is withheld until
-	// it has. All three fields are only touched on the UI thread. See
-	// BeginBlockingEvents.
-	blockInputCount   int
-	bufferedKeyEvents []GocuiEvent
-	replayPending     bool
+	// the handlers: key and paste events are buffered into bufferedInputEvents
+	// and replayed once the count drops back to zero, while mouse clicks and
+	// hover are dropped outright. It's a counter so blocking can nest.
+	// replayPending says that the replay is queued but hasn't run yet, and
+	// input is withheld until it has. All three fields are only touched on the
+	// UI thread. See BeginBlockingEvents.
+	blockInputCount     int
+	bufferedInputEvents []GocuiEvent
+	replayPending       bool
 }
 
 type NewGuiOpts struct {
@@ -305,6 +312,7 @@ func NewGui(opts NewGuiOpts) (*Gui, error) {
 			Resizes:     make(chan *TcellResizeEventWrapper),
 			MouseEvents: make(chan *TcellMouseEventWrapper),
 			FocusEvents: make(chan *TcellFocusEventWrapper),
+			PasteEvents: make(chan *TcellPasteEventWrapper),
 		}
 	}
 
@@ -382,6 +390,13 @@ func (g *Gui) ReplayMouseEvent(ev *TcellMouseEventWrapper) {
 func (g *Gui) ReplayFocusEvent(ev *TcellFocusEventWrapper) {
 	ev.task = g.NewTask()
 	g.replayedEvents.FocusEvents <- ev
+}
+
+// ReplayPasteEvent is like ReplayKeyEvent, but for the events that mark the
+// start and the end of a paste.
+func (g *Gui) ReplayPasteEvent(ev *TcellPasteEventWrapper) {
+	ev.task = g.NewTask()
+	g.replayedEvents.PasteEvents <- ev
 }
 
 // Busy reports whether any foreground work is in flight, ignoring the event
@@ -929,9 +944,10 @@ func (g *Gui) IsUIThread() bool {
 // BeginBlockingEvents starts withholding keyboard input from the handlers, so a
 // long-running operation can't be disrupted by keys the user presses while it
 // runs. Keys are buffered and replayed once EndBlockingEvents balances this
-// call; mouse clicks and hover are dropped for the duration. Scrolling,
-// resizing, focus changes and all rendering keep working throughout. It's a
-// counter, so blocking nests; every call must be paired with EndBlockingEvents.
+// call, together with the start and end of a paste around them; mouse clicks
+// and hover are dropped for the duration. Scrolling, resizing, focus changes
+// and all rendering keep working throughout. It's a counter, so blocking nests;
+// every call must be paired with EndBlockingEvents.
 //
 // Must be called on the UI thread. Callers arrange this by beginning the block
 // synchronously from the keybinding handler, before dispatching the operation
@@ -963,18 +979,18 @@ func (g *Gui) EndBlockingEvents() {
 	// before the replay gets its turn would otherwise be handled ahead of the keys
 	// buffered before it.
 	g.replayPending = true
-	g.Update(func(*Gui) error { return g.replayBufferedKeys() })
+	g.Update(func(*Gui) error { return g.replayBufferedInput() })
 }
 
-// replayBufferedKeys dispatches the keys withheld while input was blocked, and
+// replayBufferedInput dispatches the keys withheld while input was blocked, and
 // lets input through again. One of their handlers may block input afresh, and
 // then the keys after it are withheld in their turn, to be replayed when that
 // block ends.
-func (g *Gui) replayBufferedKeys() error {
+func (g *Gui) replayBufferedInput() error {
 	g.replayPending = false
 
-	buffered := g.bufferedKeyEvents
-	g.bufferedKeyEvents = nil
+	buffered := g.bufferedInputEvents
+	g.bufferedInputEvents = nil
 	for i := range buffered {
 		if err := g.handleEvent(&buffered[i]); err != nil {
 			return err
@@ -1049,13 +1065,25 @@ func (g *Gui) OnWorkerBackground(f func(Task) error) {
 
 func (g *Gui) onWorker(f func(Task) error, background bool) {
 	task := g.taskManager.NewTask(background)
-	go func() {
+	go safe(func() {
 		g.onWorkerAux(f, task)
 		task.Done()
-	}()
+	})
 }
 
 func (g *Gui) onWorkerAux(f func(Task) error, task Task) {
+	err := f(task)
+	if err != nil {
+		g.Update(func(g *Gui) error {
+			return err
+		})
+	}
+}
+
+// safe runs f and closes the screen if f panics, so that the panic is printed
+// to a usable terminal. utils.Safe does the same for the rest of lazygit, but
+// gocui can't use it because utils imports gocui.
+func safe(f func()) {
 	panicking := true
 	defer func() {
 		if panicking && Screen != nil {
@@ -1063,15 +1091,9 @@ func (g *Gui) onWorkerAux(f func(Task) error, task Task) {
 		}
 	}()
 
-	err := f(task)
+	f()
 
 	panicking = false
-
-	if err != nil {
-		g.Update(func(g *Gui) error {
-			return err
-		})
-	}
 }
 
 // A Manager is in charge of GUI's layout and can be used to build widgets.
@@ -1100,7 +1122,7 @@ func (g *Gui) SetManager(managers ...Manager) {
 	g.keybindings = nil
 	g.tabClickBindings = nil
 
-	go func() { g.gEvents <- GocuiEvent{Type: eventResize} }()
+	go safe(func() { g.gEvents <- GocuiEvent{Type: eventResize} })
 }
 
 // SetManagerFunc sets the given manager function. It deletes all views and
@@ -1114,7 +1136,7 @@ func (g *Gui) SetManagerFunc(manager func(*Gui) error) {
 func (g *Gui) MainLoop() error {
 	defer close(g.loopExited)
 
-	go func() {
+	go safe(func() {
 		for {
 			select {
 			case <-g.stop:
@@ -1123,7 +1145,7 @@ func (g *Gui) MainLoop() error {
 				g.gEvents <- g.pollEvent()
 			}
 		}
-	}()
+	})
 
 	Screen.EnableFocus()
 	Screen.EnablePaste()
@@ -1245,9 +1267,11 @@ func (g *Gui) processRemainingEvents() (bool, error) {
 // etc.)
 func (g *Gui) handleEvent(ev *GocuiEvent) error {
 	if g.withholdingInput() && eventWithheldWhileBlocking(ev) {
-		if ev.Type == eventKey {
-			// Buffer keys so they replay against fresh state on unblock.
-			g.bufferedKeyEvents = append(g.bufferedKeyEvents, *ev)
+		if ev.Type == eventKey || ev.Type == eventPaste {
+			// Buffer keys so they replay against fresh state on unblock. Buffer
+			// the start and end of a paste with them, so that pasted keys are
+			// still handled as pasted when they replay.
+			g.bufferedInputEvents = append(g.bufferedInputEvents, *ev)
 		}
 		// Mouse clicks and hover fall through to here without being buffered:
 		// replaying them once the operation has changed the layout underneath
@@ -1266,7 +1290,10 @@ func (g *Gui) handleEvent(ev *GocuiEvent) error {
 	case eventFocus:
 		return g.onFocus(ev)
 	case eventPaste:
-		g.IsPasting = ev.Start
+		g.isPasting = ev.Start
+		if !ev.Start {
+			return g.deliverPaste()
+		}
 		return nil
 	default:
 		return nil
@@ -1281,13 +1308,13 @@ func (g *Gui) withholdingInput() bool {
 }
 
 // eventWithheldWhileBlocking reports whether an event must not reach the
-// handlers while input is blocked (see BeginBlockingEvents). Key events are
-// withheld (buffered for replay); mouse clicks and hover are withheld (dropped).
-// Everything else — mouse scrolling, resize, focus, paste, errors — flows
+// handlers while input is blocked (see BeginBlockingEvents). Key and paste
+// events are withheld (buffered for replay); mouse clicks and hover are withheld
+// (dropped). Everything else — mouse scrolling, resize, focus, errors — flows
 // through as usual.
 func eventWithheldWhileBlocking(ev *GocuiEvent) bool {
 	switch ev.Type {
-	case eventKey:
+	case eventKey, eventPaste:
 		return true
 	case eventMouse:
 		return !IsMouseScrollKey(ev.Key.KeyName())
@@ -1740,14 +1767,38 @@ func (g *Gui) draw(v *View) {
 	}
 }
 
+func (g *Gui) collectPastedKey(v *View, key Key) {
+	if g.pasteView == nil {
+		g.pasteView = v
+	}
+
+	switch {
+	case key.IsPrintable():
+		g.pasteBuffer.WriteString(key.Str())
+	case key.Equals(NewKeyName(KeyEnter)):
+		g.pasteBuffer.WriteString("\n")
+	case key.Equals(NewKeyName(KeyTab)):
+		g.pasteBuffer.WriteString("\t")
+	}
+}
+
+func (g *Gui) deliverPaste() error {
+	v, text := g.pasteView, g.pasteBuffer.String()
+	g.pasteView = nil
+	g.pasteBuffer.Reset()
+
+	if v == nil || text == "" {
+		return nil
+	}
+	return v.OnPaste(text)
+}
+
 // onKey manages key-press events. A keybinding handler is called when
 // a key-press or mouse event satisfies a configured keybinding. Furthermore,
 // currentView's internal buffer is modified if currentView.Editable is true.
 func (g *Gui) onKey(ev *GocuiEvent) error {
 	switch ev.Type {
 	case eventKey:
-
-		// newlines. I actually don't quite understand why, because from reading
 		// When pasting text in Ghostty, it sends us '\r' (which is delivered as
 		// ctrl-j by tcell) instead of '\n' for newlines. I actually don't quite
 		// understand why, because from reading Ghostty's source code (e.g.
@@ -1756,8 +1807,15 @@ func (g *Gui) onKey(ev *GocuiEvent) error {
 		// in bracketed paste mode. Whatever I'm missing here, converting '\r'
 		// back to '\n' fixes pasting multi-line text from Ghostty, and doesn't
 		// seem harmful for other terminal emulators.
-		if g.IsPasting && ev.Key.Equals(NewKeyStrMod("j", ModCtrl)) {
+		if g.isPasting && ev.Key.Equals(NewKeyStrMod("j", ModCtrl)) {
 			ev.Key = NewKeyName(KeyEnter)
+		}
+
+		if g.isPasting {
+			if g.currentView != nil && g.currentView.OnPaste != nil {
+				g.collectPastedKey(g.currentView, ev.Key)
+			}
+			return nil
 		}
 
 		err := g.execKeybindings(g.currentView, ev)
@@ -1793,7 +1851,7 @@ func (g *Gui) onKey(ev *GocuiEvent) error {
 		newCx := mx - v.x0 - 1
 		newCy := my - v.y0 - 1
 		// newX and newY are relative to the view's content, independent of its scroll position
-		newX := newCx + v.ox
+		newX := v.contentX(newCx)
 		newY := newCy + v.oy
 		// if view is editable don't go further than the furthest character for that line
 		if v.Editable {
@@ -1825,7 +1883,7 @@ func (g *Gui) onKey(ev *GocuiEvent) error {
 		if IsMouseKey(ev.Key) {
 			mouseOpts = ViewMouseBindingOpts{
 				X: newX, Y: newY, Key: ev.Key.KeyName(),
-				IsDoubleClick: g.isDoubleClick(newX, newY, ev.Key.KeyName(), v),
+				IsDoubleClick: g.isDoubleClick(newX, newY, ev.Key.KeyName(), v, ev.When),
 			}
 
 			// Dispatch bindings that opt into firing while a popup panel is focused
@@ -1835,7 +1893,7 @@ func (g *Gui) onKey(ev *GocuiEvent) error {
 				return err
 			}
 			if matched {
-				g.recordClickInfo(newX, newY, ev.Key.KeyName(), v)
+				g.recordClickInfo(newX, newY, ev.Key.KeyName(), v, ev.When)
 				return nil
 			}
 		}
@@ -1899,7 +1957,7 @@ func (g *Gui) onKey(ev *GocuiEvent) error {
 		}
 
 		if IsMouseKey(ev.Key) {
-			g.recordClickInfo(newX, newY, ev.Key.KeyName(), v)
+			g.recordClickInfo(newX, newY, ev.Key.KeyName(), v, ev.When)
 			matched, err := g.execMouseKeybindings(v, ev, mouseOpts, false)
 			if err != nil {
 				return err
@@ -1933,8 +1991,10 @@ func (g *Gui) onKey(ev *GocuiEvent) error {
 }
 
 // isDoubleClick reports whether this click follows one just like it, closely
-// enough in time to count as a double click.
-func (g *Gui) isDoubleClick(x, y int, key KeyName, v *View) bool {
+// enough in time to count as a double click. It goes by when the clicks were
+// read. The second click may wait in the event queue while the first one is
+// handled, and that wait doesn't count.
+func (g *Gui) isDoubleClick(x, y int, key KeyName, v *View, when time.Time) bool {
 	return g.lastClick != nil &&
 		!IsMouseScrollKey(key) &&
 		key != MouseRelease &&
@@ -1942,13 +2002,13 @@ func (g *Gui) isDoubleClick(x, y int, key KeyName, v *View) bool {
 		y == g.lastClick.y &&
 		key == g.lastClick.key &&
 		v.Name() == g.lastClick.viewName &&
-		time.Now().Before(g.lastClick.time.Add(DOUBLE_CLICK_THRESHOLD))
+		when.Before(g.lastClick.time.Add(DOUBLE_CLICK_THRESHOLD))
 }
 
 // recordClickInfo remembers this click as the one a following click is compared
 // against. Only the clicks that reach a binding are recorded, so a click the
 // client rejects leaves double-click detection where it was.
-func (g *Gui) recordClickInfo(x, y int, key KeyName, v *View) {
+func (g *Gui) recordClickInfo(x, y int, key KeyName, v *View, when time.Time) {
 	if IsMouseScrollKey(key) {
 		g.lastClick = nil
 		return
@@ -1965,7 +2025,7 @@ func (g *Gui) recordClickInfo(x, y int, key KeyName, v *View) {
 		y:        y,
 		key:      key,
 		viewName: v.Name(),
-		time:     time.Now(),
+		time:     when,
 	}
 }
 
@@ -2030,10 +2090,6 @@ func IsMouseScrollKey(keyName KeyName) bool {
 func (g *Gui) execKeybindings(v *View, ev *GocuiEvent) error {
 	var globalKb *keybinding
 	var matchingParentViewKb *keybinding
-
-	if g.IsPasting && v != nil && !v.Editable {
-		return nil
-	}
 
 	// if we're searching, and we've hit n/N/Esc, we ignore the default keybinding
 	if v != nil && v.IsSearching() {
@@ -2179,7 +2235,7 @@ func (g *Gui) Resume() error {
 	// Schedule a redraw of the whole screen. Nothing else guarantees one:
 	// flushes are skipped while suspended, and after re-engaging the screen
 	// the terminal shows nothing until we draw again.
-	go func() { g.gEvents <- GocuiEvent{Type: eventResize} }()
+	go safe(func() { g.gEvents <- GocuiEvent{Type: eventResize} })
 
 	return nil
 }
